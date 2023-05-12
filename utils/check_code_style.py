@@ -75,14 +75,15 @@ segment_include = {re.compile(regex): description for regex, description in {
 }.items()}
 # Dict of patterns for selecting potential formatting issues in a single word.
 # Also contains the error description for the patterns.
-word_include = {re.compile(regex): description for regex, description in {
-	# Matches any single '+', '/', '%', '=' operator that has no trailing whitespace.
-	"^([^+/%=]?(?<!operator))[+/%=][^+/%=,\\s\\)\\]}]": "missing whitespace after operator",
-	# Matches any series of operators ending with '=', '<' or '>' that have no trailing whitespace.
-	"^[^<>=:]?[" + std_op + "]*[=<>:][^=<>:,\\s\\)\\]}]": "missing whitespace after operator",
-	# Matches any '(void)' arguments in methods
-	"\\(void\\)": "do not use void to denote a function with no arguments"
-}.items()}
+word_include = {
+	re.compile(regex): description
+	for regex, description in {
+		"^([^+/%=]?(?<!operator))[+/%=][^+/%=,\\s\\)\\]}]": "missing whitespace after operator",
+		f"^[^<>=:]?[{std_op}"
+		+ "]*[=<>:][^=<>:,\\s\\)\\]}]": "missing whitespace after operator",
+		"\\(void\\)": "do not use void to denote a function with no arguments",
+	}.items()
+}
 
 # Patterns for excluding matches (test()#match) of 'include'
 match_exclude = [re.compile(regex) for regex in [
@@ -229,11 +230,14 @@ def sanitize(lines, skip_checks=False):
 			first_two = line[i:i + 2]
 			if is_multiline_comment:
 				if first_two == "*/":
-					if not skip_checks:
-						# Checking for space after comment
-						if i > 0 and line[i - 1] != ' ' and line[i - 1] != '\t':
-							errors.append(Error(line[i - 1:i + 2], line_count,
-												"missing space before end of multiline comment"))
+					if (
+						not skip_checks
+						and i > 0
+						and line[i - 1] != ' '
+						and line[i - 1] != '\t'
+					):
+						errors.append(Error(line[i - 1:i + 2], line_count,
+											"missing space before end of multiline comment"))
 					# End of comment
 					is_multiline_comment = False
 					i += 1
@@ -241,12 +245,13 @@ def sanitize(lines, skip_checks=False):
 				continue
 			if (not is_string) and first_two == "//":
 				segments.append(line[start_index:i].rstrip())
-				if not skip_checks:
-					# Checking for space after comment
-					if len(line) > i + 2:
-						if re.search(after_comment, line[i + 2:i + 3]):
-							errors.append(Error(line[i:i + 3], line_count,
-												"missing space after beginning of single-line comment"))
+				if (
+					not skip_checks
+					and len(line) > i + 2
+					and re.search(after_comment, line[i + 2 : i + 3])
+				):
+					errors.append(Error(line[i:i + 3], line_count,
+										"missing space after beginning of single-line comment"))
 				break
 			elif (not is_string) and first_two == "/*":
 				segments.append(line[start_index:i].rstrip())
@@ -262,7 +267,6 @@ def sanitize(lines, skip_checks=False):
 											"missing space after beginning of multiline comment"))
 				header_found = True
 				continue
-			# Checking for strings (both standard and raw literals)
 			elif (not is_string) and char == "'":
 				if is_char:
 					start_index = i
@@ -339,9 +343,7 @@ def check_pre_sanitize(lines, file):
 # Returns a tuple of errors and warnings.
 def check_local_format(lines, segmented_lines):
 	issues = ([], [])
-	line_count = 0
-	for line, segments in zip(lines, segmented_lines):
-		line_count += 1
+	for line_count, (line, segments) in enumerate(zip(lines, segmented_lines), start=1):
 		line = line.lstrip()
 		# Removing indentation
 		if len(segments) > 0:
@@ -356,12 +358,12 @@ def check_local_format(lines, segmented_lines):
 # line_count: the position of the line
 # Returns a tuple of errors and warnings.
 def check_regex_format(line, segments, line_count):
-	errors = []
 	warnings = []
-	# Check full-line regexes
-	for regex, description in line_include.items():
-		if check_match(regex, line, line):
-			errors.append(Error(line, line_count, description))
+	errors = [
+		Error(line, line_count, description)
+		for regex, description in line_include.items()
+		if check_match(regex, line, line)
+	]
 	for segment in segments:
 		# Skip empty
 		if re.match(whitespace_only, segment):
@@ -424,8 +426,8 @@ def check_copyright(lines, file):
 	# The two halves of the copyright notice. There might be a couple lines of text separating the two halves.
 	# The bool value stores whether the text is interpreted as a regex.
 	copyright_begin = [
-		["/* " + name, False],
-		["Copyright \\(c\\) \\d{4}(?:(?:-|, )\\d{4})? by .*", True]
+		[f"/* {name}", False],
+		["Copyright \\(c\\) \\d{4}(?:(?:-|, )\\d{4})? by .*", True],
 	]
 	copyright_end = [
 		["", False],
@@ -450,10 +452,9 @@ def check_copyright(lines, file):
 			if not re.search(copyright, lines[index]):
 				error_line = index
 				break
-		else:
-			if copyright != lines[index]:
-				error_line = index
-				break
+		elif copyright != lines[index]:
+			error_line = index
+			break
 		index += 1
 	not_found_error_line = index
 	if error_line == -1:
@@ -465,10 +466,9 @@ def check_copyright(lines, file):
 					if not re.search(copyright, lines[index]):
 						error_line = index
 						break
-				else:
-					if copyright != lines[index]:
-						error_line = index
-						break
+				elif copyright != lines[index]:
+					error_line = index
+					break
 				index += 1
 			if error_line == -1:
 				complete = True
@@ -490,9 +490,7 @@ def check_line_format(lines):
 	errors = []
 	warnings = []
 
-	line_count = 0
-	for line in lines:
-		line_count += 1
+	for line_count, line in enumerate(lines, start=1):
 		if len(line) > 120:
 			errors.append(Error(line, line_count, "lines should hard wrap at 120 characters"))
 		for char in line:
@@ -514,13 +512,16 @@ def check_include(sanitized_lines, original_lines, file):
 	# Replacing include statements
 	for include in reversed_includes:
 		stripped = include[1:-1]
-		replacement = '<' + stripped + '>' if include[0] == '"' else '"' + stripped + '"'
+		replacement = f'<{stripped}>' if include[0] == '"' else f'"{stripped}"'
 
-		original_lines = [line if line != "#include " + include else "#include " + replacement for line in original_lines]
+		original_lines = [
+			line if line != f"#include {include}" else f"#include {replacement}"
+			for line in original_lines
+		]
 
 	name = file.split("/")[-1]
 	if name.endswith(".cpp"):
-		name = name[0:-4] + ".h"
+		name = f"{name[:-4]}.h"
 
 	include_lines = [index for index, line in enumerate(sanitized_lines) if line.startswith("#include ")]
 	groups = []
@@ -533,7 +534,7 @@ def check_include(sanitized_lines, original_lines, file):
 		previous = i
 
 	if file.endswith(".cpp") and name[0].isupper():
-		if len(groups) == 0:
+		if not groups:
 			warnings.append(Warning("", 0, "missing include statement for own header file"))
 			return errors, warnings
 		elif original_lines[groups[0][0]] != "#include \"" + name + "\"":
@@ -554,13 +555,19 @@ def check_include(sanitized_lines, original_lines, file):
 			line = group_lines[i]
 			if line.count("/") > 0:
 				if quote:
-					line = line[0:line.find("\"") + 1] + line[line.rfind("/") + 1:len(line)]
+					line = line[:line.find("\"") + 1] + line[line.rfind("/") + 1:]
 				else:
-					line = line[0:line.find("<") + 1] + line[line.rfind("/") + 1:len(line)]
+					line = line[:line.find("<") + 1] + line[line.rfind("/") + 1:]
 				group_lines[i] = line
-		for i in range(len(group) - 1):
-			if group_lines[i].lower() > group_lines[i + 1].lower():
-				warnings.append(Warning(group_lines[i], group[i] + 1, "includes are not in alphabetical order"))
+		warnings.extend(
+			Warning(
+				group_lines[i],
+				group[i] + 1,
+				"includes are not in alphabetical order",
+			)
+			for i in range(len(group) - 1)
+			if group_lines[i].lower() > group_lines[i + 1].lower()
+		)
 	return errors, warnings
 
 
