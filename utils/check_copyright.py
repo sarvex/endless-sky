@@ -15,6 +15,5 @@ def check_copyright() -> bool:
         return True
 
 
-if __name__ == '__main__':
-    if not check_copyright():
-        exit(1)
+if __name__ == '__main__' and not check_copyright():
+    exit(1)

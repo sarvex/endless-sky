@@ -121,15 +121,8 @@ for line in sys.stdin:
         efreti=''
         for from_index in range(len(drow)):
             char = drow[from_index]
-            if char in to_exile:
-                exile += to_exile[char]
-            else:
-                exile += char
-            if char in to_efreti:
-                efreti += to_efreti[char]
-            else:
-                efreti += char
-
+            exile += to_exile.get(char, char)
+            efreti += to_efreti.get(char, char)
         # Append the ciphered word to the list:
         exiles.append(exile)
         efretis.append(efreti)

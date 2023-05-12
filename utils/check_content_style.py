@@ -192,7 +192,11 @@ def check_line_separators(contents, auto_correct, config):
 			elif line.endswith("\r"):
 				result.errors.append(Error(index + 1, "line separators should use LF only; found CR"))
 
-	if config["trailingEmptyLine"] == "always" and not (contents[-1].endswith('\r') or contents[-1].endswith('\n')):
+	if (
+		config["trailingEmptyLine"] == "always"
+		and not contents[-1].endswith('\r')
+		and not contents[-1].endswith('\n')
+	):
 		result.errors.append(Error(len(contents), "missing trailing empty line"))
 	elif config["trailingEmptyLine"] == "never" and (contents[-1].endswith('\r') or contents[-1].endswith('\n')):
 		result.errors.append(Error(len(contents), "trailing empty line"))
@@ -218,35 +222,33 @@ def check_line_separators(contents, auto_correct, config):
 # config: the script configuration
 # Return value: a CheckResult
 def check_copyright(contents, auto_correct, config):
-	if config["checkCopyright"]:
-		for copyright_format in config["copyrightFormats"]:
-			holder = copyright_format["holder"]
-			notice = copyright_format["notice"]
+	if not config["checkCopyright"]:
+		return CheckResult()
+	for copyright_format in config["copyrightFormats"]:
+		holder = copyright_format["holder"]
+		notice = copyright_format["notice"]
 
-			# Matching copyright holder line(s)
-			text_index = 0
-			for line in contents:
-				if re.fullmatch(holder, line) is not None:
-					text_index += 1
-				else:
-					break
+		# Matching copyright holder line(s)
+		text_index = 0
+		for line in contents:
+			if re.fullmatch(holder, line) is not None:
+				text_index += 1
+			else:
+				break
 
-			# Couldn't match first line
-			if text_index == 0:
-				continue
+		# Couldn't match first line
+		if text_index == 0:
+			continue
 
-			# Checking the remaining lines
-			success = True
-			for i, (expected, actual) in enumerate(zip(notice, contents[text_index:])):
-				if re.fullmatch(expected, actual) is None:
-					success = False
-					break
-			# Match
-			if success:
-				return CheckResult()
-		# No format matched
-		return CheckResult([Error(1, "invalid copyright header")])
-	return CheckResult()
+		success = all(
+			re.fullmatch(expected, actual) is not None
+			for expected, actual in zip(notice, contents[text_index:])
+		)
+		# Match
+		if success:
+			return CheckResult()
+	# No format matched
+	return CheckResult([Error(1, "invalid copyright header")])
 
 
 # Counts the level of indentation for this line of text.
@@ -280,7 +282,7 @@ def check_indentation(contents, auto_correct, config):
 		return 0
 
 	result = CheckResult()
-	result.new_file_contents = [line for line in contents]
+	result.new_file_contents = list(contents)
 
 	max_delta = config["maxIndentationIncrease"]
 	indent = config["indentation"]
@@ -340,7 +342,7 @@ def check_indentation(contents, auto_correct, config):
 # Return value: a CheckResult
 def check_with_regex(check_group, contents, auto_correct, config):
 	result = CheckResult()
-	result.new_file_contents = [line for line in contents]
+	result.new_file_contents = list(contents)
 
 	regex_list = check_group["checks"]
 	for entry in regex_list:
@@ -354,11 +356,9 @@ def check_with_regex(check_group, contents, auto_correct, config):
 				if "except" in entry:
 					match = re.search(entry["regex"], line)
 					match_text = match.string[match.start():match.end()]
-					valid = True
-					for exception in entry["except"]:
-						if re.search(exception, match_text):
-							valid = False
-							break
+					valid = not any(
+						re.search(exception, match_text) for exception in entry["except"]
+					)
 					if not valid:
 						continue
 				# Formatting issue found
@@ -381,11 +381,10 @@ def check_with_regex(check_group, contents, auto_correct, config):
 						result.fixed_errors.append(Error(index + 1, entry["description"]))
 					else:
 						result.fixed_warnings.append(Warning(index + 1, entry["description"]))
+				elif is_error:
+					result.errors.append(Error(index + 1, entry["description"]))
 				else:
-					if is_error:
-						result.errors.append(Error(index + 1, entry["description"]))
-					else:
-						result.warnings.append(Warning(index + 1, entry["description"]))
+					result.warnings.append(Warning(index + 1, entry["description"]))
 	return result
 
 
@@ -411,9 +410,8 @@ def find_text_lines(contents, config, excluded_nodes, exclude_comments, exclude_
 			new_contents.append(None)
 			# Comment or empty line
 			continue
-		if is_word:
-			if count_indent(indent, line) <= word_indent_level:
-				is_word = False
+		if is_word and count_indent(indent, line) <= word_indent_level:
+			is_word = False
 		if not is_word:
 			stripped = line.strip().split("#")[0]
 			for node in excluded_nodes:
@@ -467,10 +465,8 @@ def check_content_style(file, auto_correct, config):
 		rewrite(file, issues.new_file_contents, config)
 
 	while True:
-		f = open(file, "r", newline='')
-		contents = f.readlines()
-		f.close()
-
+		with open(file, "r", newline='') as f:
+			contents = f.readlines()
 		# Empty file
 		if not contents:
 			return CheckResult()
@@ -528,10 +524,10 @@ def print_file_result(file, result):
 		print(file)
 		result.errors.sort()
 		result.warnings.sort()
-		if result.errors:
-			print(*result.errors, sep='\n')
-		if result.warnings:
-			print(*result.warnings, sep='\n')
+	if result.errors:
+		print(*result.errors, sep='\n')
+	if result.warnings:
+		print(*result.warnings, sep='\n')
 
 
 # Prints the overall result of the style checks.
@@ -546,22 +542,24 @@ def print_result(fixed_errors, fixed_warnings, errors, warnings):
 	if fixed_errors > 0 or fixed_warnings > 0:
 		text += "Fixed "
 		if fixed_errors > 0:
-			text += str(fixed_errors) + " " + ("error" if fixed_errors == 1 else "errors")
+			text += f"{str(fixed_errors)} " + ("error" if fixed_errors == 1 else "errors")
 		if fixed_warnings > 0:
 			if fixed_errors > 0:
 				text += " and "
-			text += str(fixed_warnings) + " " + ("warning" if fixed_warnings == 1 else "warnings")
+			text += f"{str(fixed_warnings)} " + (
+				"warning" if fixed_warnings == 1 else "warnings"
+			)
 		text += ". "
 	if errors == 0 and warnings == 0:
 		text += "No " + ("further " if fixed_errors > 0 or fixed_warnings > 0 else "") + "issues found."
 	else:
 		text += "Found "
 		if errors > 0:
-			text += str(errors) + " " + ("error" if errors == 1 else "errors")
+			text += f"{str(errors)} " + ("error" if errors == 1 else "errors")
 		if warnings > 0:
 			if errors > 0:
 				text += " and "
-			text += str(warnings) + " " + ("warning" if warnings == 1 else "warnings")
+			text += f"{str(warnings)} " + ("warning" if warnings == 1 else "warnings")
 		if fixed_errors > 0 or fixed_warnings > 0:
 			text += " that could not be fixed"
 		text += "."
@@ -578,21 +576,21 @@ if __name__ == '__main__':
 	resume_index = 1
 	for i in range(1, len(sys.argv)):
 		arg = sys.argv[i]
-		if arg == "-h" or arg == "--help":
+		if arg in ["-h", "--help"]:
 			print_help()
 			exit(0)
-		elif arg == "-c" or arg == "--config-help":
+		elif arg in ["-c", "--config-help"]:
 			print_config_help()
 			exit(0)
-		elif arg == "-a" or arg == "--auto-correct":
+		elif arg in ["-a", "--auto-correct"]:
 			auto_correct = True
-		elif arg == "-n" or arg == "--no-correct":
+		elif arg in ["-n", "--no-correct"]:
 			auto_correct = False
-		elif arg == "-R" or arg == "--no-recursion":
+		elif arg in ["-R", "--no-recursion"]:
 			recursive = False
-		elif arg == "-r" or arg == "--recursive":
+		elif arg in ["-r", "--recursive"]:
 			recursive = True
-		elif arg == "-f" or arg == "--format-file":
+		elif arg in ["-f", "--format-file"]:
 			if len(sys.argv) > i + 1:
 				format_file = sys.argv[i + 1]
 				i = i + 1
@@ -604,7 +602,7 @@ if __name__ == '__main__':
 			resume_index = i + 1
 			break
 		else:
-			print("Unknown option '" + sys.argv[i] + "'")
+			print(f"Unknown option '{sys.argv[i]}'")
 			exit(3)
 	# loading config file
 	config = load_config(format_file)
@@ -624,11 +622,7 @@ if __name__ == '__main__':
 		# - it's a file, and
 		# - has an accepted extension
 		data_files += [file for file in glob.glob(root, recursive=recursive) if os.path.isfile(file)]
-	# Removing duplicates and sorting
-	# Since not all path names are resolved, there could still be duplicate entries after this
-	data_files = list(set(data_files))
-	data_files.sort()
-
+	data_files = sorted(set(data_files))
 	# Parsing files
 	fixed_error_count = 0
 	fixed_warning_count = 0
